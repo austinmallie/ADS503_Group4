@@ -1,0 +1,152 @@
+---
+title: "coral bleaching EDA"
+output: html_document
+date: "2025-06-08"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(viridis)
+library(tidyr)
+library(corrplot)
+```
+
+```{r}
+cb <- read.csv("C:/Users/kesdr/Downloads/sst_annual_avg_by_location.csv")
+cb
+```
+
+Removing null values and outliers
+```{r}
+sst_clean <- cb %>%
+  filter(!is.na(avg_sst)) %>%
+  filter(avg_sst > -2, avg_sst < 40)
+```
+
+```{r}
+summary(sst_clean$avg_sst)
+```
+
+```{r}
+ggplot(sst_clean, aes(x = avg_sst)) +
+  geom_histogram(bins = 50, fill = "steelblue") +
+  labs(title = "Distribution of Annual Average SST", x = "Sea Surface Temp (°C)", y = "Count") +
+  theme_minimal()
+```
+
+
+```{r}
+years_to_plot <- c(1985, 2000, 2015)
+
+ggplot(sst_clean %>% filter(year %in% years_to_plot), 
+       aes(x = lon, y = lat, fill = avg_sst)) +
+  geom_tile() +
+  facet_wrap(~ year) +
+  coord_fixed() +
+  scale_fill_viridis_c(option = "magma") +
+  labs(title = "Global Sea Surface Temperature by Year", fill = "SST (°C)") +
+  theme_minimal()
+```
+
+```{r}
+sst_matrix <- sst_clean %>%
+  unite("loc", lon, lat, remove = FALSE) %>%
+  select(loc, year, avg_sst) %>%
+  pivot_wider(names_from = year, values_from = avg_sst)
+
+# Replace NA with row means (or impute smarter if needed)
+sst_matrix[,-1] <- apply(sst_matrix[,-1], 1, function(x) ifelse(is.na(x), mean(x, na.rm=TRUE), x)) %>% t()
+```
+ 
+ PCA
+```{r}
+# Combining lat-lon as one location 
+sst_pca_input <- sst_clean %>%
+  unite("loc", lon, lat, remove = FALSE) %>%
+  select(loc, year, avg_sst) %>%
+  pivot_wider(names_from = year, values_from = avg_sst)
+
+# Droping locations with too many missing values
+sst_pca_input <- sst_pca_input %>%
+  drop_na()
+
+# Saving location info and numeric matrix
+loc_info <- sst_pca_input %>% select(loc)
+sst_matrix <- sst_pca_input %>% select(-loc)
+```
+
+```{r}
+pca_result <- prcomp(sst_matrix, center = TRUE, scale. = TRUE)
+
+scree <- data.frame(PC = 1:length(pca_result$sdev),
+                    Variance = (pca_result$sdev)^2 / sum(pca_result$sdev^2))
+
+ggplot(scree, aes(x = PC, y = Variance)) +
+  geom_line() + geom_point() +
+  labs(title = "Scree Plot: Variance Explained by PC",
+       x = "Principal Component", y = "Proportion of Variance") +
+  theme_classic()
+```
+
+
+
+```{r}
+sst_pca_input <- sst_clean %>%
+  unite("loc", lon, lat, remove = FALSE) %>%
+  select(loc, year, avg_sst) %>%
+  pivot_wider(names_from = year, values_from = avg_sst) %>%
+  drop_na()  # ⚠️ This is critical
+
+# Extract location info
+loc_info <- sst_pca_input %>% select(loc)
+
+# PCA-ready numeric matrix
+sst_matrix <- sst_pca_input %>% select(-loc)
+```
+
+```{r}
+pca_result <- prcomp(sst_matrix, center = TRUE, scale. = TRUE)
+```
+
+```{r}
+pca_scores <- as.data.frame(pca_result$x)
+pca_scores <- bind_cols(loc_info, pca_scores)
+pca_scores <- separate(pca_scores, loc, into = c("lon", "lat"), convert = TRUE)
+
+pca_scores %>%
+  filter(!is.na(PC1)) %>%
+  summarise(count = n(), min = min(PC1), max = max(PC1), mean = mean(PC1))
+```
+
+```{r}
+ggplot(pca_scores, aes(x = lon, y = lat, fill = PC1)) +
+  geom_tile() +
+  coord_fixed() +
+  scale_fill_viridis_c() +
+  labs(title = "Spatial Pattern of PC1", fill = "PC1 Score") +
+  theme_minimal()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

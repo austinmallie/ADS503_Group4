@@ -1,0 +1,109 @@
+---
+title: "Global SST"
+output: html_document
+date: "2025-06-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+
+Packages Needed
+```{r}
+install.packages("ncdf4")
+
+library(ncdf4)
+library(tidyverse)
+library(dplyr)
+```
+
+Loading the NC File
+```{r}
+nc <- nc_open("C:/Users/kesdr/Downloads/sst.mon.mean.nc")
+
+print(nc)
+```
+
+Extracting the variables
+```{r}
+# Extracting variables
+lon <- ncvar_get(nc, "lon")
+lat <- ncvar_get(nc, "lat")
+time <- ncvar_get(nc, "time")
+sst <- ncvar_get(nc, "sst")
+
+# Close file
+nc_close(nc)
+```
+
+Flatten Sea Surface Temp to Logitude x Latidude
+```{r}
+# First time point (September 1, 1981)
+sst_t1 <- sst[, , 1]
+
+# Build grid
+grid <- expand.grid(lon = lon, lat = lat)
+
+# Flatten SST matrix to vector
+grid$sst <- as.vector(sst_t1)
+
+head(grid)
+```
+
+Inspecting time variable
+```{r}
+nc <- nc_open("C:/Users/kesdr/Downloads/sst.mon.mean.nc")
+
+# Use variable metadata instead of dimension
+time_units <- ncatt_get(nc, "time", "units")$value
+
+print(time_units)
+```
+Changing Time to Real Dates
+```{r}
+origin_date <- as.Date("1800-01-01")
+dates <- origin_date + time
+
+head(dates)
+```
+
+Extract the year from the dates
+```{r}
+years <- format(dates, "%Y")
+```
+
+```{r}
+# Prepare list to hold each month's data
+all_data <- list()
+
+# Loop over each time step (month)
+for (i in seq_along(dates)) {
+  sst_slice <- sst[, , i]
+  df <- expand.grid(lon = lon, lat = lat)
+  df$sst <- as.vector(sst_slice)
+  df$year <- as.integer(years[i])
+  all_data[[i]] <- df %>% filter(!is.na(sst))
+}
+
+# Combine into a single data frame
+sst_df <- bind_rows(all_data)
+
+# Group by year and location, calculating mean SST
+sst_yearly_avg <- sst_df %>%
+  group_by(lon, lat, year) %>%
+  summarise(avg_sst = mean(sst, na.rm = TRUE), .groups = "drop")
+
+head(sst_yearly_avg)
+```
+
+```{r}
+write.csv(sst_yearly_avg, "sst_annual_avg_by_location.csv", row.names = FALSE)
+```
+
