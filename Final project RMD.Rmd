@@ -1,0 +1,204 @@
+---
+title: "ADS 503 Final Project"
+author: "Austin Mallie"
+date: "2025-06-11"
+output: pdf_document
+---
+
+```{r}
+library(readxl)
+library(dplyr)
+library(readr)
+library(lubridate)
+library(geosphere)
+library(tidyr)
+library(FNN)
+library(tidyverse)
+library(corrplot)
+library(summarytools)
+```
+
+
+```{r}
+# Load Bleach Data
+bleaching_data <- read_xlsx("Global_Coral_Bleaching_Database.xlsx")
+# Load SST data
+sst_data <- read_csv("sst_annual_avg_by_location.csv")
+
+```
+
+```{r}
+# Clean column names
+colnames(bleaching_data) <- make.names(colnames(bleaching_data))
+
+# Inspect structure
+str(bleaching_data)
+dim(bleaching_data)
+head(bleaching_data)
+
+
+dfSummary(bleaching_data)
+
+# Latitude & Longitude (Distribution of site locations)
+
+ggplot(bleaching_data, aes(x = LATITUDE)) +
+  geom_histogram(bins = 50, fill = "lightblue", color = "black") +
+  labs(title = "Histogram of LATITUDE", x = "Latitude", y = "Frequency")
+
+ggplot(bleaching_data, aes(x = LONGITUDE)) +
+  geom_histogram(bins = 50, fill = "lightgreen", color = "black") +
+  labs(title = "Histogram of LONGITUDE", x = "Longitude", y = "Frequency")
+
+
+# YEAR
+
+ggplot(bleaching_data, aes(x = YEAR)) +
+  geom_histogram(binwidth = 1, fill = "coral", color = "black") +
+  labs(title = "Histogram of YEAR", x = "Year", y = "Number of Observations")
+
+
+# PERCENT_BLEACHED and MORTALITY 
+
+# Clean Percent Bleached first:
+bleaching_data <- bleaching_data %>%
+  mutate(PERCENT_BLEACHED_CLEAN = suppressWarnings(as.numeric(PERCENT_BLEACHED)))
+
+
+ggplot(bleaching_data, aes(x = PERCENT_BLEACHED_CLEAN)) +
+  geom_histogram(bins = 50, fill = "orange", color = "black", na.rm = TRUE) +
+  labs(title = "Histogram of PERCENT_BLEACHED", x = "% Bleached", y = "Frequency")
+
+# Boxplot of PERCENT_BLEACHED 
+ggplot(bleaching_data, aes(y = PERCENT_BLEACHED_CLEAN)) +
+  geom_boxplot(fill = "orange", color = "black", na.rm = TRUE) +
+  labs(title = "Boxplot of PERCENT_BLEACHED", y = "% Bleached")
+
+# PERCENT_MORTALITY 
+bleaching_data <- bleaching_data %>%
+  mutate(PERCENT_MORTALITY_CLEAN = suppressWarnings(as.numeric(PERCENT_MORTALITY)))
+
+ggplot(bleaching_data, aes(x = PERCENT_MORTALITY_CLEAN)) +
+  geom_histogram(bins = 50, fill = "red", color = "black", na.rm = TRUE) +
+  labs(title = "Histogram of PERCENT_MORTALITY", x = "% Mortality", y = "Frequency")
+
+ggplot(bleaching_data, aes(y = PERCENT_MORTALITY_CLEAN)) +
+  geom_boxplot(fill = "red", color = "black", na.rm = TRUE) +
+  labs(title = "Boxplot of PERCENT_MORTALITY", y = "% Mortality")
+
+
+# COUNTRY
+
+ggplot(bleaching_data, aes(x = reorder(COUNTRY, COUNTRY, function(x)-length(x)))) +
+  geom_bar(fill = "skyblue", color = "black") +
+  labs(title = "Observations per Country", x = "Country", y = "Count") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+
+```
+
+
+```{r}
+ggplot(bleaching_data, aes(x = PERCENT_BLEACHED_CLEAN, y = PERCENT_MORTALITY_CLEAN)) +
+  geom_point(alpha = 0.3, color = "darkred") +
+  labs(title = "Scatterplot: % Bleached vs % Mortality",
+       x = "% Bleached", y = "% Mortality") +
+  theme_minimal()
+
+ggplot(bleaching_data, aes(x = YEAR, y = PERCENT_BLEACHED_CLEAN)) +
+  geom_point(alpha = 0.3, color = "coral") +
+  geom_smooth(method = "loess", color = "blue") +
+  labs(title = "Scatterplot: % Bleached over Years",
+       x = "Year", y = "% Bleached") +
+  theme_minimal()
+
+ggplot(bleaching_data, aes(x = YEAR, y = PERCENT_MORTALITY_CLEAN)) +
+  geom_point(alpha = 0.3, color = "firebrick") +
+  geom_smooth(method = "loess", color = "blue") +
+  labs(title = "Scatterplot: % Mortality over Years",
+       x = "Year", y = "% Mortality") +
+  theme_minimal()
+
+ggplot(bleaching_data, aes(x = LONGITUDE, y = LATITUDE)) +
+  geom_point(alpha = 0.3, color = "steelblue") +
+  labs(title = "Geographic Distribution of Coral Bleaching Observations",
+       x = "Longitude", y = "Latitude") +
+  theme_minimal()
+
+```
+
+In the next code block the bleach data set will be cleaned so that the column names and the values within them will be more helpful during the modeling process.
+
+```{r}
+
+# Clean percent columns (bleaching & mortality)
+clean_percent <- function(x) {
+  x <- as.character(x)
+  
+  if (is.na(x) || x == "N/A") return(NA_real_)
+  
+  x <- str_trim(x)
+  x <- str_remove_all(x, "[^0-9\\-\\.]+")  # Keep digits, dash, decimal
+  
+  if (str_detect(x, "-")) {
+    nums <- str_split(x, "-")[[1]]
+    nums <- as.numeric(nums)
+    return(mean(nums, na.rm = TRUE))
+  }
+  
+  val <- suppressWarnings(as.numeric(x))
+  return(val)
+}
+
+# Apply cleaning to bleaching and mortality columns
+bleaching_data <- bleaching_data %>%
+  mutate(
+    PERCENT_BLEACHED_CLEAN = sapply(PERCENT_BLEACHED, clean_percent),
+    PERCENT_MORTALITY_CLEAN = sapply(PERCENT_MORTALITY, clean_percent),
+    MIN_PERCENT_BLEACHED_CLEAN = sapply(MIN_PERCENT_BLEACHED, clean_percent),
+    MAX_PERCENT_BLEACHED_CLEAN = sapply(MAX_PERCENT_BLEACHED, clean_percent)
+  )
+
+```
+
+Here the data sets will be merged on their lat and long values. Due to the differences in how the data sets handle their latitude and longitude values, grid rounding will be employed to help pair the sets together. The SST data is collected on a predefined spatial grid which often has values such as .25 degrees or 1 degree, whereas the bleaching set has precised lat and long values that do not align with the SST points. Therefore rounding will be needed so that the sets can merge together. Because the year to year variability is important in the modeling process the sets will be merged on the SST year values.   
+```{r}
+# Define rounding function (0.25 degree grid)
+round_to_grid <- function(x, grid = 0.25) {
+  round(x / grid) * grid
+}
+
+# Apply rounding to bleaching set (LATITUDE & LONGITUDE)
+bleaching_data <- bleaching_data %>%
+  mutate(
+    lat_round = round_to_grid(LATITUDE, grid = 0.25),
+    lon_round = round_to_grid(LONGITUDE, grid = 0.25)
+  )
+
+# Apply rounding to SST set (lat & lon columns)
+sst_data <- sst_data %>%
+  mutate(
+    lat_round = round_to_grid(lat, grid = 0.25),
+    lon_round = round_to_grid(lon, grid = 0.25)
+  )
+
+# Merge data: join on lat_round, lon_round, and year
+# Bleaching YEAR column matches SST year column
+merged_data <- left_join(
+  bleaching_data,
+  sst_data,
+  by = c("lat_round", "lon_round", "YEAR" = "year")
+)
+
+# Quick check of the merged dataset
+glimpse(merged_data)
+
+```
+
+Data preprocessing
+```{r}
+# Check for any missing data
+colSums(is.na(merged_data))
+
+
+```
+
