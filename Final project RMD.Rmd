@@ -347,7 +347,164 @@ nrow(test_data)
 
 
 ```{r}
+
+# LINEAR REGRESSION
+lm_model <- lm(PERCENT_BLEACHED_CLEAN ~ avg_sst + DEPTH_CLEAN + YEAR + MONTH, data = train_data)
+
+# Summary of model
+summary(lm_model)
+
+# Predict on test data
+lm_predictions <- predict(lm_model, newdata = test_data)
+
+# Evaluate RMSE
+lm_rmse <- sqrt(mean((lm_predictions - test_data$PERCENT_BLEACHED_CLEAN)^2, na.rm = TRUE))
+cat("Linear Regression RMSE:", lm_rmse, "\n")
+
+# Plot: Predicted vs Actual
+ggplot(data = NULL, aes(x = test_data$PERCENT_BLEACHED_CLEAN, y = lm_predictions)) +
+  geom_point(alpha = 0.4, color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "Linear Regression: Predicted vs. Actual",
+       x = "Actual % Bleached", y = "Predicted % Bleached") +
+  theme_minimal()
+
 ```
+
+
+```{r}
+# LOGISTIC REGRESSION
+
+# Create binary outcome: High Bleaching if > 50%
+train_data$Bleached_High <- ifelse(train_data$PERCENT_BLEACHED_CLEAN > 50, 1, 0)
+test_data$Bleached_High  <- ifelse(test_data$PERCENT_BLEACHED_CLEAN > 50, 1, 0)
+
+# LOGISTIC REGRESSION
+log_model <- glm(Bleached_High ~ avg_sst + DEPTH_CLEAN + YEAR + MONTH, 
+                 data = train_data, family = "binomial")
+
+# Summary
+summary(log_model)
+
+# Predict probabilities
+log_probs <- predict(log_model, newdata = test_data, type = "response")
+log_preds <- ifelse(log_probs > 0.5, 1, 0)
+
+# Confusion matrix
+library(caret)
+confusionMatrix(factor(log_preds), factor(test_data$Bleached_High))
+
+# Plot: Confusion Matrix
+log_cm <- confusionMatrix(factor(log_preds), factor(test_data$Bleached_High))
+fourfoldplot(log_cm$table,
+             color = c("#E41A1C", "#377EB8"),
+             main = "Logistic Regression: Confusion Matrix")
+
+# ROC and AUC
+library(pROC)
+log_roc <- roc(test_data$Bleached_High, log_probs)
+plot(log_roc, col = "blue", main = "ROC Curve - Logistic Regression")
+auc(log_roc)
+```
+
+
+```{r}
+# k-NN with k Optimization
+
+# Normalize helper
+normalize <- function(x) {
+  return((x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE)))
+}
+
+# Ensure MONTH is numeric
+train_data$MONTH <- as.numeric(train_data$MONTH)
+test_data$MONTH  <- as.numeric(test_data$MONTH)
+
+# First: Recode target in train_data directly
+train_data$Bleached_High_Factor <- factor(
+  ifelse(train_data$Bleached_High == 1, "Yes", "No"),
+  levels = c("No", "Yes")
+)
+
+# Then: Create knn_train_set from predictors + cleaned target
+knn_train_set <- train_data %>%
+  select(avg_sst, DEPTH_CLEAN, YEAR, MONTH, Bleached_High_Factor) %>%
+  mutate(across(c(avg_sst, DEPTH_CLEAN, YEAR, MONTH), normalize))
+
+# Rename for caret training
+colnames(knn_train_set)[colnames(knn_train_set) == "Bleached_High_Factor"] <- "Bleached_High"
+
+# Prepare test set (no target needed here)
+test_knn <- test_data %>%
+  select(avg_sst, DEPTH_CLEAN, YEAR, MONTH) %>%
+  mutate(across(everything(), normalize))
+
+# Remove any NA rows
+knn_train_set <- knn_train_set %>% drop_na()
+
+# k Optimization using caret
+library(caret)
+
+control <- trainControl(method = "cv", number = 10, classProbs = TRUE)
+grid <- expand.grid(k = seq(1, 21, 2))
+
+set.seed(503)
+knn_cv_model <- train(Bleached_High ~ ., 
+                      data = knn_train_set,
+                      method = "knn",
+                      trControl = control,
+                      tuneGrid = grid)
+
+# Results
+plot(knn_cv_model)
+print(knn_cv_model$bestTune)
+```
+
+
+
+```{r}
+# Final k-NN Evaluation (Confusion Matrix + ROC/AUC)
+
+# Load required libraries
+library(FNN)
+library(caret)
+library(pROC)
+
+# Drop NAs from training data
+train_input <- knn_train_set %>% select(-Bleached_High) %>% drop_na()
+train_target <- knn_train_set %>% drop_na() %>% pull(Bleached_High)
+
+# Drop NAs from test data (predictors only)
+test_input <- test_knn %>% drop_na()
+
+# Predict using the best k from cross-validation
+best_k <- knn_cv_model$bestTune$k
+knn_preds <- knn(train = train_input,
+                 test = test_input,
+                 cl = train_target,
+                 k = best_k,
+                 prob = TRUE)
+
+# Extract corresponding test labels (cleaned to match filtered predictors)
+test_labels <- test_data %>%
+  filter(!is.na(avg_sst) & !is.na(DEPTH_CLEAN) & !is.na(YEAR) & !is.na(MONTH)) %>%
+  mutate(Bleached_High_Factor = factor(ifelse(Bleached_High == 1, "Yes", "No"), levels = c("No", "Yes"))) %>%
+  pull(Bleached_High_Factor)
+
+# Confusion matrix
+confusionMatrix(knn_preds, test_labels)
+
+# ROC and AUC
+knn_prob_values <- ifelse(knn_preds == "Yes", attr(knn_preds, "prob"), 1 - attr(knn_preds, "prob"))
+
+knn_roc <- roc(response = test_labels,
+               predictor = knn_prob_values)
+
+plot(knn_roc, col = "darkgreen", main = paste("ROC Curve - k-NN (k =", best_k, ")"))
+auc(knn_roc)
+
+```
+
 
 
 ```{r}
@@ -355,8 +512,22 @@ nrow(test_data)
 ```
 
 
+
 ```{r}
 
+```
+
+
+
+```{r}
 
 ```
+
+
+
+```{r}
+
+```
+
+
 
