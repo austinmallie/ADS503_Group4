@@ -1,0 +1,560 @@
+---
+title: "final project"
+output: html_document
+date: "2025-06-19"
+---
+
+```{r}
+library(readxl)
+library(dplyr)
+library(readr)
+library(lubridate)
+library(geosphere)
+library(tidyr)
+library(FNN)
+library(tidyverse)
+library(corrplot)
+library(summarytools)
+library(stringr)
+library(caret)
+```
+
+
+```{r}
+# Load Bleach Data
+bleaching_data <- read_csv("Global_Coral_Bleaching_Database.csv")
+# Load SST data
+sst_data <- read_csv("sst_annual_avg_by_location.csv")
+
+```
+
+```{r}
+# Clean column names
+colnames(bleaching_data) <- make.names(colnames(bleaching_data))
+
+# Inspect structure
+str(bleaching_data)
+dim(bleaching_data)
+head(bleaching_data)
+
+
+dfSummary(bleaching_data)
+
+# Latitude & Longitude (Distribution of site locations)
+
+ggplot(bleaching_data, aes(x = LATITUDE)) +
+  geom_histogram(bins = 50, fill = "lightblue", color = "black") +
+  labs(title = "Histogram of LATITUDE", x = "Latitude", y = "Frequency")
+
+ggplot(bleaching_data, aes(x = LONGITUDE)) +
+  geom_histogram(bins = 50, fill = "lightgreen", color = "black") +
+  labs(title = "Histogram of LONGITUDE", x = "Longitude", y = "Frequency")
+
+
+# YEAR
+
+ggplot(bleaching_data, aes(x = YEAR)) +
+  geom_histogram(binwidth = 1, fill = "coral", color = "black") +
+  labs(title = "Histogram of YEAR", x = "Year", y = "Number of Observations")
+
+
+# PERCENT_BLEACHED and MORTALITY 
+
+# Clean Percent Bleached first:
+bleaching_data <- bleaching_data %>%
+  mutate(PERCENT_BLEACHED_CLEAN = suppressWarnings(as.numeric(PERCENT_BLEACHED)))
+
+
+ggplot(bleaching_data, aes(x = PERCENT_BLEACHED_CLEAN)) +
+  geom_histogram(bins = 50, fill = "orange", color = "black", na.rm = TRUE) +
+  labs(title = "Histogram of PERCENT_BLEACHED", x = "% Bleached", y = "Frequency")
+
+# Boxplot of PERCENT_BLEACHED 
+ggplot(bleaching_data, aes(y = PERCENT_BLEACHED_CLEAN)) +
+  geom_boxplot(fill = "orange", color = "black", na.rm = TRUE) +
+  labs(title = "Boxplot of PERCENT_BLEACHED", y = "% Bleached")
+
+# PERCENT_MORTALITY 
+bleaching_data <- bleaching_data %>%
+  mutate(PERCENT_MORTALITY_CLEAN = suppressWarnings(as.numeric(PERCENT_MORTALITY)))
+
+ggplot(bleaching_data, aes(x = PERCENT_MORTALITY_CLEAN)) +
+  geom_histogram(bins = 50, fill = "red", color = "black", na.rm = TRUE) +
+  labs(title = "Histogram of PERCENT_MORTALITY", x = "% Mortality", y = "Frequency")
+
+ggplot(bleaching_data, aes(y = PERCENT_MORTALITY_CLEAN)) +
+  geom_boxplot(fill = "red", color = "black", na.rm = TRUE) +
+  labs(title = "Boxplot of PERCENT_MORTALITY", y = "% Mortality")
+
+
+# COUNTRY
+
+ggplot(bleaching_data, aes(x = reorder(COUNTRY, COUNTRY, function(x)-length(x)))) +
+  geom_bar(fill = "skyblue", color = "black") +
+  labs(title = "Observations per Country", x = "Country", y = "Count") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+
+
+```
+
+
+```{r}
+ggplot(bleaching_data, aes(x = PERCENT_BLEACHED_CLEAN, y = PERCENT_MORTALITY_CLEAN)) +
+  geom_point(alpha = 0.3, color = "darkred") +
+  labs(title = "Scatterplot: % Bleached vs % Mortality",
+       x = "% Bleached", y = "% Mortality") +
+  theme_minimal()
+
+ggplot(bleaching_data, aes(x = YEAR, y = PERCENT_BLEACHED_CLEAN)) +
+  geom_point(alpha = 0.3, color = "coral") +
+  geom_smooth(method = "loess", color = "blue") +
+  labs(title = "Scatterplot: % Bleached over Years",
+       x = "Year", y = "% Bleached") +
+  theme_minimal()
+
+ggplot(bleaching_data, aes(x = YEAR, y = PERCENT_MORTALITY_CLEAN)) +
+  geom_point(alpha = 0.3, color = "firebrick") +
+  geom_smooth(method = "loess", color = "blue") +
+  labs(title = "Scatterplot: % Mortality over Years",
+       x = "Year", y = "% Mortality") +
+  theme_minimal()
+
+ggplot(bleaching_data, aes(x = LONGITUDE, y = LATITUDE)) +
+  geom_point(alpha = 0.3, color = "steelblue") +
+  labs(title = "Geographic Distribution of Coral Bleaching Observations",
+       x = "Longitude", y = "Latitude") +
+  theme_minimal()
+
+```
+
+In the next code block the bleach data set will be cleaned so that the column names and the values within them will be more helpful during the modeling process.
+
+```{r}
+
+# Clean percent columns (bleaching & mortality)
+clean_percent <- function(x) {
+  x <- as.character(x)
+  
+  if (is.na(x) || x == "N/A") return(NA_real_)
+  
+  x <- str_trim(x)
+  x <- str_remove_all(x, "[^0-9\\-\\.]+")  # Keep digits, dash, decimal
+  
+  if (str_detect(x, "-")) {
+    nums <- str_split(x, "-")[[1]]
+    nums <- as.numeric(nums)
+    return(mean(nums, na.rm = TRUE))
+  }
+  
+  val <- suppressWarnings(as.numeric(x))
+  return(val)
+}
+
+# Apply cleaning to bleaching and mortality columns
+bleaching_data <- bleaching_data %>%
+  mutate(
+    PERCENT_BLEACHED_CLEAN = sapply(PERCENT_BLEACHED, clean_percent),
+    PERCENT_MORTALITY_CLEAN = sapply(PERCENT_MORTALITY, clean_percent),
+    MIN_PERCENT_BLEACHED_CLEAN = sapply(MIN_PERCENT_BLEACHED, clean_percent),
+    MAX_PERCENT_BLEACHED_CLEAN = sapply(MAX_PERCENT_BLEACHED, clean_percent)
+  )
+
+```
+
+Here the data sets will be merged on their lat and long values. Due to the differences in how the data sets handle their latitude and longitude values, grid rounding will be employed to help pair the sets together. The SST data is collected on a predefined spatial grid which often has values such as .25 degrees or 1 degree, whereas the bleaching set has precised lat and long values that do not align with the SST points. Therefore the data sets will need to be merged based on areas defined by areas that cover specific spans of Longitude and Latitude. This way geographic areas are better covered and get representation
+```{r}
+# Use geographic areas of waters for the bleaching set
+bleaching_data <- bleaching_data %>%
+  mutate(
+    AREA = case_when(
+      LATITUDE >= -30 & LATITUDE <= -10 & LONGITUDE >= 110 & LONGITUDE <= 160 ~ "Southwest Pacific",
+    LATITUDE >= -10 & LATITUDE <= 10 & LONGITUDE >= 90 & LONGITUDE <= 180 ~ "Equatorial Pacific",
+    LATITUDE >= 10 & LATITUDE <= 30 & LONGITUDE >= -80 & LONGITUDE <= -30 ~ "Caribbean",
+    LATITUDE >= 10 & LATITUDE <= 30 & LONGITUDE >= 100 & LONGITUDE <= 140 ~ "South China Sea",
+    LATITUDE >= -30 & LATITUDE <= 30 & LONGITUDE >= 20 & LONGITUDE <= 80 ~ "Indian Ocean",
+    LATITUDE >= -40 & LATITUDE <= 40 & LONGITUDE >= -180 & LONGITUDE <= -80 ~ "Eastern Pacific",
+    TRUE ~ "Other"
+  ))
+
+# Same with the SST set
+sst_data <- sst_data %>%
+  mutate(
+    AREA = case_when(
+   lat >= -30 & lat <= -10 & lon >= 110 & lon <= 160 ~ "Southwest Pacific",
+    lat >= -10 & lat <= 10 & lon >= 90 & lon <= 180 ~ "Equatorial Pacific",
+    lat >= 10 & lat <= 30 & lon >= -80 & lon <= -30 ~ "Caribbean",
+    lat >= 10 & lat <= 30 & lon >= 100 & lon <= 140 ~ "South China Sea",
+    lat >= -30 & lat <= 30 & lon >= 20 & lon <= 80 ~ "Indian Ocean",
+    lat >= -40 & lat <= 40 & lon >= -180 & lon <= -80 ~ "Eastern Pacific",
+    TRUE ~ "Other"
+  ))
+
+sst_area_summary <- sst_data %>%
+  group_by(AREA, year) %>%
+  summarise(avg_sst = median(avg_sst, na.rm = TRUE), .groups = "drop")
+
+
+merged_data <- left_join(
+  bleaching_data,
+  sst_area_summary,
+  by = c("AREA", "YEAR" = "year"))
+  
+# Quick check of the merged dataset
+glimpse(merged_data)
+
+```
+
+
+```{r}
+
+# Check for any missing data
+colSums(is.na(merged_data))
+
+
+```
+
+Data preprocessing
+```{r}
+# The target of the study is not the mortality of the reefs but rather the bleaching of them. There are far too many values that are missing from this column so it will be dropped. Also columns that have no predictive value or are just metadata will be dropped as well. Min percent bleach, max percent bleach can also be dropped because they are strongly correlated with the percent bleached clean target variable
+merged_data <- merged_data %>%
+  select(
+    -RECORD_ID,
+    -SURVEY_TYPE,
+    -DATA_POINT_OF_CONTACT,
+    -POC_E.MAIL_ADDRESS,
+    -CITATION,
+    -COMMENTS,
+    -PERCENT_MORTALITY,
+    -PERCENT_MORTALITY_CLEAN,
+    -MIN_PERCENT_BLEACHED,
+    -MAX_PERCENT_BLEACHED,
+    -SOURCE,
+    -CORAL_REGIONS,
+    -SITE_NAME
+  )
+
+
+
+```
+
+
+```{r}
+
+# Here we will clean the depth column and make it ready for modeling while also creating bins for the ranges of values depth can take.
+# Clean up DEPTH column 
+merged_data <- merged_data %>%
+  mutate(
+    DEPTH_CLEAN = as.character(DEPTH),
+    DEPTH_CLEAN = ifelse(
+      DEPTH_CLEAN %in% c("N/A", "NA", "", " ", "unknown", "UNK", "null", "NULL"),
+      NA, DEPTH_CLEAN
+    ),
+    DEPTH_CLEAN = str_remove_all(DEPTH_CLEAN, "[^0-9\\.\\-]+"),
+    DEPTH_CLEAN = ifelse(
+      str_detect(DEPTH_CLEAN, "-"),
+      sapply(str_split(DEPTH_CLEAN, "-"), function(x) {
+        nums <- suppressWarnings(as.numeric(x))
+        if (all(is.na(nums))) {
+          return(NA_real_)
+        } else {
+          return(mean(nums, na.rm = TRUE))
+        }
+      }),
+      DEPTH_CLEAN
+    ),
+    DEPTH_CLEAN = as.numeric(DEPTH_CLEAN)
+  )
+
+# # Since Percent_Bleached_Clean is the target variable we can drop the empty rows because it injects artificial data within the target. We cannot accurately impute the SST values without introducing bias into the model so those values will be dropped as well
+merged_data_clean <- merged_data %>%
+  filter(!is.na(PERCENT_BLEACHED_CLEAN)) %>%
+  filter(!is.na(avg_sst))
+
+# Group based depth imputation based on lat, long and year
+merged_data_clean <- merged_data_clean %>%
+  group_by(AREA, YEAR) %>%
+  mutate(
+    DEPTH_CLEAN = ifelse(
+      is.na(DEPTH_CLEAN),
+      median(DEPTH_CLEAN, na.rm = TRUE),
+      DEPTH_CLEAN
+    )
+  ) %>%
+  ungroup()
+
+# Fall back redundancy just in case some missing values are missing, so the median depth is used in place
+global_median_depth <- median(merged_data_clean$DEPTH_CLEAN, na.rm = TRUE)
+
+merged_data_clean <- merged_data_clean %>%
+  mutate(
+    DEPTH_CLEAN = ifelse(
+      is.na(DEPTH_CLEAN),
+      global_median_depth,
+      DEPTH_CLEAN
+    )
+  )
+
+# Bin Depth
+merged_data_clean <- merged_data_clean %>%
+  mutate(
+    DEPTH_BIN = case_when(
+      DEPTH_CLEAN <= 5 ~ "Very Shallow",
+      DEPTH_CLEAN <= 10 ~ "Shallow",
+      DEPTH_CLEAN <= 20 ~ "Mid",
+      DEPTH_CLEAN <= 40 ~ "Deep",
+      DEPTH_CLEAN > 40 ~ "Very Deep"
+    )
+  )
+
+```
+
+
+```{r}
+#We can now drop the depth column because all of the necessary information from in is now stored in depth_clean and Depth_bin
+merged_data_clean <- merged_data_clean %>% select(-DEPTH)
+```
+
+
+```{r}
+
+# Recheck for any missing data
+colSums(is.na(merged_data_clean))
+```
+
+Now we can begin the modeling process by splitting the data.
+```{r}
+set.seed(5034)
+
+# Select the columns you will use
+model_data <- merged_data_clean %>%
+  select(
+    COUNTRY, LOCATION, LATITUDE, LONGITUDE, MONTH, YEAR,
+    MIN_PERCENT_BLEACHED_CLEAN, MAX_PERCENT_BLEACHED_CLEAN,
+    AREA, avg_sst, DEPTH_CLEAN, DEPTH_BIN, PERCENT_BLEACHED_CLEAN
+  )
+
+# Split into training and testing sets
+train_index <- createDataPartition(model_data$PERCENT_BLEACHED_CLEAN, p = 0.8, list = FALSE)
+
+train_data <- model_data[train_index, ]
+test_data  <- model_data[-train_index, ]
+
+# Check sizes
+nrow(train_data)
+nrow(test_data)
+```
+
+
+Decision Tree Model
+
+```{r}
+install.packages("rpart")
+install.packages("rpart.plot")
+
+library(rpart)
+library(rpart.plot)
+```
+
+Fitting the decision tree model 
+```{r}
+tree_model <- rpart(PERCENT_BLEACHED_CLEAN ~ .,
+                    data = train_data,
+                    method = "anova")
+```
+
+visualizing the tree
+```{r}
+model_data_reduced <- model_data %>%
+  select(-COUNTRY, -LOCATION)
+
+# Refit tree on reduced data
+tree_model_reduced <- rpart(PERCENT_BLEACHED_CLEAN ~ ., data = model_data_reduced, method = "anova")
+
+rpart.plot(tree_model_reduced, type = 2, extra = 101,
+           fallen.leaves = TRUE, cex = 0.6,
+           main = "Decision Tree for Coral Bleaching")
+
+```
+
+Cleaner visuallization of tree
+```{r}
+rpart.plot(tree_model_reduced,
+           type = 4,              # labels below the split
+           extra = 101,           # predicted value + % obs
+           box.palette = "GnBu",  # prettier color theme
+           shadow.col = "gray",   # light box shadow
+           fallen.leaves = TRUE,
+           branch.lty = 2,        
+           branch = 0.4,          
+           roundint = FALSE,      
+           cex = 0.7,            
+           main = "Coral Bleaching Decision Tree")
+```
+
+
+```{r}
+summary(tree_model_reduced)
+```
+
+Based on this summary of the dataset, it can be observed that the strongest predictors of coral bleaching are historical bleaching with the minimum percent of bleached cleaned being 54% and max perecent bleached being 43% of variable importance. Other predictors such as latitdue, area, and year had minimal contribution. Features related to the ocean such as average sea surface temp and depth also had very low splitting importance, not appearing in the main branches. Using the top node split, observations with low historical bleaching minimum has an average future bleaching of 3.5% whiile high bleaching minimums has an average future bleaching of 64%.
+
+Predicting and Evaulating using Test Dataset
+```{r}
+predictions <- predict(tree_model_reduced, newdata = test_data)
+
+# Compare predictions to actuals
+summary(predictions)
+summary(test_data$PERCENT_BLEACHED_CLEAN)
+```
+
+
+
+
+
+##Refitting decision tree without the historical bleaching
+
+droping historical columns
+```{r}
+model_data_no_history <- model_data_reduced %>%
+  select(-MIN_PERCENT_BLEACHED_CLEAN, -MAX_PERCENT_BLEACHED_CLEAN)
+```
+
+refit and visualize
+```{r}
+tree_model_no_history <- rpart(PERCENT_BLEACHED_CLEAN ~ ., 
+                               data = model_data_no_history,
+                               method = "anova")
+
+rpart.plot(tree_model_no_history,
+           type = 2, extra = 101,
+           box.palette = "Oranges",
+           fallen.leaves = TRUE,
+           cex = 0.7,
+           main = "Decision Tree Without Historical Bleaching")
+```
+
+
+```{r}
+rpart.plot(tree_model_no_history,
+           type = 4,                
+           extra = 101,             
+           box.palette = "Oranges",  
+           shadow.col = "gray",      
+           cex = 0.7,               
+           branch.lty = 2,          
+           fallen.leaves = TRUE,
+           main = "Pruned Coral Bleaching Tree (No History)")
+```
+
+```{r}
+summary(tree_model_no_history)
+```
+
+Excluding historical data from the decision tree and focusing more on environmental and contextual data, it can be seen that the first and most important split is the year 2015 as it indicates a shift in bleaching behavior post 2015. Before 2015, the bleaching trends can be observed to be much lower with shallow depths and specific months influncing the outcomes. After 2015, the mean bleaching significantly increases and seems to be influenced by month (September-December being more severe), area (more intense in the equatorial pecific and Indian Ocean), and latitdue (lower latitudes that are closer to the equator had higher bleaching).
+
+
+#Random forests
+
+```{r}
+library(randomForest)
+```
+
+Training
+```{r}
+rf_model <- randomForest(
+  PERCENT_BLEACHED_CLEAN ~ ., 
+  data = train_data,
+  ntree = 500,          # Number of trees
+  mtry = 3,             # Number of variables tried at each split
+  importance = TRUE     # Enables variable importance metrics
+)
+```
+
+Predicting with test data
+```{r}
+rf_pred <- predict(rf_model, newdata = test_data)
+
+# RMSE
+rf_rmse <- sqrt(mean((rf_pred - test_data$PERCENT_BLEACHED_CLEAN)^2))
+print(paste("Random Forest RMSE:", round(rf_rmse, 2)))
+```
+
+```{r}
+importance(rf_model)
+varImpPlot(rf_model)
+```
+
+Based on the random forest model RMSE score of 2.25, this model is highly accurate with the most important predictors being latitdue (strongest driver), max_percent_bleached_clean (historical bleaching), and avg_sst (sea surface temperature). 
+
+
+##Linear Discriminant Analysis (LDA)
+
+```{r}
+library(MASS)
+```
+
+creating bleaching classes
+```{r}
+model_data <- model_data %>%
+  mutate(
+    bleaching_class = case_when(
+      PERCENT_BLEACHED_CLEAN < 10 ~ "low",
+      PERCENT_BLEACHED_CLEAN < 50 ~ "medium",
+      TRUE ~ "high"
+    ) %>% as.factor()
+  )
+```
+
+applying classes to training and test sets
+```{r}
+train_data$bleaching_class <- as.factor(case_when(
+  train_data$PERCENT_BLEACHED_CLEAN < 10 ~ "low",
+  train_data$PERCENT_BLEACHED_CLEAN < 50 ~ "medium",
+  TRUE ~ "high"
+))
+
+test_data$bleaching_class <- as.factor(case_when(
+  test_data$PERCENT_BLEACHED_CLEAN < 10 ~ "low",
+  test_data$PERCENT_BLEACHED_CLEAN < 50 ~ "medium",
+  TRUE ~ "high"
+))
+```
+
+train LDA
+```{r}
+lda_model <- lda(bleaching_class ~ LATITUDE + LONGITUDE + YEAR + MONTH + avg_sst + DEPTH_CLEAN + AREA,
+                 data = train_data)
+```
+
+predict using test set
+```{r}
+lda_pred <- predict(lda_model, newdata = test_data)
+```
+
+performance
+```{r}
+#confusion matrix
+table(Predicted = lda_pred$class, Actual = test_data$bleaching_class)
+
+# Accuracy
+mean(lda_pred$class == test_data$bleaching_class)
+```
+This accuracy shows that the LDA model only correctly classifies 71.93% of coral bleaching classes with  the low class being the most frequent classification. This model only performs moderately well with limitations on performance due to class overlap.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
