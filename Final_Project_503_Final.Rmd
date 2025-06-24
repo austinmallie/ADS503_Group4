@@ -83,6 +83,10 @@ ggplot(bleaching_data, aes(x = PERCENT_MORTALITY_CLEAN)) +
   geom_histogram(bins = 50, fill = "red", color = "black", na.rm = TRUE) +
   labs(title = "Histogram of PERCENT_MORTALITY", x = "% Mortality", y = "Frequency")
 
+# Boxplot of PERCENT_BLEACHED 
+ggplot(bleaching_data, aes(y = PERCENT_BLEACHED_CLEAN)) +
+  geom_boxplot(fill = "orange", color = "black", na.rm = TRUE) +
+  labs(title = "Boxplot of PERCENT_BLEACHED", y = "% Bleached")
 
 # COUNTRY
 
