@@ -1,6 +1,6 @@
 ---
 title: "ADS 503 Final Project"
-author: "Austin Mallie"
+author: "Austin Mallie, Kirsten Emily Drennen, Brendan Robinson"
 date: "2025-06-11"
 output: pdf_document
 ---
