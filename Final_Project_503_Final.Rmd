@@ -75,11 +75,6 @@ ggplot(bleaching_data, aes(x = PERCENT_BLEACHED_CLEAN)) +
   geom_histogram(bins = 50, fill = "orange", color = "black", na.rm = TRUE) +
   labs(title = "Histogram of PERCENT_BLEACHED", x = "% Bleached", y = "Frequency")
 
-# Boxplot of PERCENT_BLEACHED 
-ggplot(bleaching_data, aes(y = PERCENT_BLEACHED_CLEAN)) +
-  geom_boxplot(fill = "orange", color = "black", na.rm = TRUE) +
-  labs(title = "Boxplot of PERCENT_BLEACHED", y = "% Bleached")
-
 # PERCENT_MORTALITY 
 bleaching_data <- bleaching_data %>%
   mutate(PERCENT_MORTALITY_CLEAN = suppressWarnings(as.numeric(PERCENT_MORTALITY)))
@@ -96,6 +91,25 @@ ggplot(bleaching_data, aes(x = reorder(COUNTRY, COUNTRY, function(x)-length(x)))
   labs(title = "Observations per Country", x = "Country", y = "Count") +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
 
+
+# Heat MAP
+years_to_plot <- c(1985, 2000, 2015)
+
+ggplot(sst_data %>% filter(year %in% years_to_plot), 
+       aes(x = lon, y = lat, fill = avg_sst)) +
+  geom_tile() +
+  facet_wrap(~ year) +
+  coord_fixed() +
+  scale_fill_viridis_c(option = "magma") +
+  labs(title = "Global Sea Surface Temperature by Year", fill = "SST (°C)") +
+  theme_minimal()
+
+
+# SST ANUAL AVG DIST.
+ggplot(sst_data, aes(x = avg_sst)) +
+  geom_histogram(bins = 50, fill = "steelblue") +
+  labs(title = "Distribution of Annual Average SST", x = "Sea Surface Temp (°C)", y = "Count") +
+  theme_minimal()
 
 ```
 
